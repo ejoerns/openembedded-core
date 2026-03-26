@@ -4,9 +4,9 @@ LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://COPYING.MIT;md5=5750f3aa4ea2b00c2bf21b2b2a7b714d"
 
 SRC_URI = "\
-    file://mount-copybind \
+    file://mount.copybind \
     file://COPYING.MIT \
-    file://volatile-binds.service.in \
+    file://volatile-binds.mount.in \
 "
 
 S = "${UNPACKDIR}"
@@ -24,18 +24,18 @@ VOLATILE_BINDS ?= "\
 VOLATILE_BINDS[type] = "list"
 VOLATILE_BINDS[separator] = "\n"
 
-def volatile_systemd_services(d):
-    services = []
+def volatile_systemd_units(d):
+    units = []
     for line in oe.data.typed_value("VOLATILE_BINDS", d):
         if not line:
             continue
         what, where = line.split(None, 1)
-        services.append("%s.service" % what[1:].replace("/", "-"))
-    return " ".join(services)
+        units.append("%s.mount" % where[1:].replace("/", "-"))
+    return " ".join(units)
 
-SYSTEMD_SERVICE:${PN} = "${@volatile_systemd_services(d)}"
+SYSTEMD_SERVICE:${PN} = "${@volatile_systemd_units(d)}"
 
-FILES:${PN} += "${systemd_system_unitdir}/*.service ${servicedir}"
+FILES:${PN} += "${systemd_system_unitdir}/*.mount ${servicedir}"
 
 # Set to 1 to forcibly skip OverlayFS, and default to copy+bind
 AVOID_OVERLAYFS = "0"
@@ -46,33 +46,33 @@ do_compile () {
             continue
         fi
 
-        servicefile="$(echo "${spec#/}" | tr / -).service"
-        [ "$mountpoint" != ${localstatedir}/lib ] || var_lib_servicefile=$servicefile
+        mountfile="$(echo "${mountpoint#/}" | tr / -).mount"
+        [ "$mountpoint" != ${localstatedir}/lib ] || var_lib_mountfile=$mountfile
         sed -e "s#@what@#$spec#g; s#@where@#$mountpoint#g" \
             -e "s#@whatparent@#${spec%/*}#g; s#@whereparent@#${mountpoint%/*}#g" \
-            -e "s#@avoid_overlayfs@#${@d.getVar('AVOID_OVERLAYFS')}#g" \
-            volatile-binds.service.in >$servicefile
+            -e "s#@options@#${@'x-avoid-overlayfs' if d.getVar('AVOID_OVERLAYFS') == '1' else 'defaults'}#g" \
+            volatile-binds.mount.in >$mountfile
     done <<END
 ${@d.getVar('VOLATILE_BINDS').replace("\\n", "\n")}
 END
 
-    if [ -e "$var_lib_servicefile" ]; then
-        # As the seed is stored under /var/lib, ensure that this service runs
-        # after the volatile /var/lib is mounted.
+    if [ -e "$var_lib_mountfile" ]; then
+        # As the seed is stored under /var/lib, ensure that this mount unit
+        # runs before systemd-random-seed.service
         sed -i -e "/^Before=/s/\$/ systemd-random-seed.service/" \
                -e "/^WantedBy=/s/\$/ systemd-random-seed.service/" \
-               "$var_lib_servicefile"
+               "$var_lib_mountfile"
     fi
 }
 
 do_install () {
     install -d ${D}${base_sbindir}
     install -d ${D}${servicedir}
-    install -m 0755 mount-copybind ${D}${base_sbindir}/
+    install -m 0755 mount.copybind ${D}${base_sbindir}/
 
     install -d ${D}${systemd_system_unitdir}
-    for service in ${SYSTEMD_SERVICE:${PN}}; do
-        install -m 0644 $service ${D}${systemd_system_unitdir}/
+    for unit in ${SYSTEMD_SERVICE:${PN}}; do
+        install -m 0644 $unit ${D}${systemd_system_unitdir}/
     done
 
     # Suppress attempts to process some tmpfiles that are not temporary.

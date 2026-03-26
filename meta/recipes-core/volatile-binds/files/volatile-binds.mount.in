@@ -8,12 +8,11 @@ ConditionPathExists=|!@whatparent@
 ConditionPathExists=@where@
 ConditionPathIsReadWrite=!@where@
 
-[Service]
-Type=oneshot
-RemainAfterExit=Yes
-Environment=MOUNT_COPYBIND_AVOID_OVERLAYFS=@avoid_overlayfs@
-ExecStart=/sbin/mount-copybind @what@ @where@
-ExecStop=/bin/umount @where@
+[Mount]
+What=@what@
+Where=@where@
+Type=copybind
+Options=@options@
 
 [Install]
 WantedBy=local-fs.target

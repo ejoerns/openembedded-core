@@ -2,12 +2,16 @@
 #
 # Perform a bind mount, copying existing files as we do so to ensure the
 # overlaid path has the necessary content.
-# If the target is a directory and overlayfs is available (and the environment
-# variable MOUNT_COPYBIND_AVOID_OVERLAYFS=1 is not set), then an overlay mount
+# If the target is a directory and overlayfs is available (and the
+# x-avoid-overlayfs mount option or the environment variable
+# MOUNT_COPYBIND_AVOID_OVERLAYFS=1 is not set), then an overlay mount
 # will be attempted first.
+#
+# This script is intended to be invoked as a mount helper via:
+#   mount -t copybind spec mountpoint [-o OPTIONS]
 
 if [ $# -lt 2 ]; then
-    echo >&2 "Usage: $0 spec mountpoint [OPTIONS]"
+    echo >&2 "Usage: $0 spec mountpoint [-o OPTIONS]"
     exit 1
 fi
 
@@ -16,14 +20,33 @@ spec=$1
 
 # e.g. /var/lib
 mountpoint=$2
+shift 2
 
-if [ $# -gt 2 ]; then
-    options=$3
-else
-    options=
-fi
+# Parse remaining arguments (mount helper calling convention)
+options=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o) shift; options="$1";;
+        -n|-f|-v|-s|-r|-w) ;;
+        *) ;;
+    esac
+    shift
+done
 
-[ -n "$options" ] && options=",$options"
+# Check for x-avoid-overlayfs mount option, or legacy environment variable
+case ",$options," in
+    *,x-avoid-overlayfs,*) MOUNT_COPYBIND_AVOID_OVERLAYFS=1;;
+esac
+
+# Strip private options and 'defaults' before passing to mount
+extra_opts=""
+for opt in $(printf '%s' "$options" | tr ',' ' '); do
+    case "$opt" in
+        x-avoid-overlayfs|defaults) ;;
+        *) extra_opts="${extra_opts:+$extra_opts,}$opt";;
+    esac
+done
+[ -n "$extra_opts" ] && extra_opts=",$extra_opts"
 
 mkdir -p "${spec%/*}"
 
@@ -63,7 +86,7 @@ if [ -d "$mountpoint" ]; then
             cp -aPR "$mountpoint"/. "$spec/"
         fi
 
-        mount -o "bind$options" "$spec" "$mountpoint"
+        mount -o "bind$extra_opts" "$spec" "$mountpoint"
         # restore the selinux context.
         if command -v selinuxenabled > /dev/null 2>&1; then
             if selinuxenabled; then
@@ -76,7 +99,7 @@ elif [ -f "$mountpoint" ]; then
         cp -aP "$mountpoint" "$spec"
     fi
 
-    mount -o "bind$options" "$spec" "$mountpoint"
+    mount -o "bind$extra_opts" "$spec" "$mountpoint"
     # restore the selinux context.
     if command -v selinuxenabled > /dev/null 2>&1; then
         if selinuxenabled; then
