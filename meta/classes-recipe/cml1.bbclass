@@ -77,6 +77,25 @@ do_menuconfig[nostamp] = "1"
 do_menuconfig[dirs] = "${KCONFIG_CONFIG_ROOTDIR}"
 addtask menuconfig after do_configure
 
+python do_oldconfig() {
+    import shutil
+
+    defconfig = os.path.join(d.getVar('UNPACKDIR'), "defconfig")
+    config = os.path.join(d.getVar('KCONFIG_CONFIG_ROOTDIR'), ".config")
+
+    # Copy original defconfig to .config
+    if os.path.isfile(defconfig):
+        bb.plain("Restoring configuration from %s to prepare for running 'oldconfig'." % defconfig)
+        shutil.copy(defconfig, config)
+    else:
+        bb.warn("No 'defconfig' found in UNPACKDIR. Cannot copy run 'oldconfig'")
+
+    run_kconfig_command(d, d.expand("oldconfig ${EXTRA_OEMAKE}"))
+}
+do_oldconfig[nostamp] = "1"
+do_oldconfig[dirs] = "${KCONFIG_CONFIG_ROOTDIR}"
+addtask oldconfig after do_configure
+
 python do_diffconfig() {
     import shutil
     import subprocess
