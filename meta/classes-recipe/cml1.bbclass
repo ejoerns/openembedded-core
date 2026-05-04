@@ -34,12 +34,8 @@ TERMINFO = "${STAGING_DATADIR_NATIVE}/terminfo"
 KCONFIG_CONFIG_COMMAND ??= "menuconfig ${EXTRA_OEMAKE}"
 KCONFIG_CONFIG_ENABLE_MENUCONFIG ??= "true"
 KCONFIG_CONFIG_ROOTDIR ??= "${B}"
-python do_menuconfig() {
+def run_kconfig_command(d, command):
     import shutil
-
-    if not bb.utils.to_boolean(d.getVar("KCONFIG_CONFIG_ENABLE_MENUCONFIG")):
-        bb.fatal("do_menuconfig is disabled, please check KCONFIG_CONFIG_ENABLE_MENUCONFIG variable.")
-        return
 
     config = os.path.join(d.getVar('KCONFIG_CONFIG_ROOTDIR'), ".config")
     configorig = os.path.join(d.getVar('KCONFIG_CONFIG_ROOTDIR'), ".config.orig")
@@ -57,7 +53,7 @@ python do_menuconfig() {
     # ensure that environment variables are overwritten with this tasks 'd' values
     d.appendVar("OE_TERMINAL_EXPORTS", " PKG_CONFIG_PATH PKG_CONFIG_LIBDIR PKG_CONFIG_SYSROOT_DIR")
 
-    oe_terminal("sh -c 'make %s; if [ $? -ne 0 ]; then echo \"Command failed.\"; printf \"Press any key to continue... \"; read r; fi'" % d.getVar('KCONFIG_CONFIG_COMMAND'),
+    oe_terminal("sh -c 'make %s; if [ $? -ne 0 ]; then echo \"Command failed.\"; printf \"Press any key to continue... \"; read r; fi'" % command,
                 d.getVar('PN') + ' Configuration', d)
 
     try:
@@ -68,6 +64,13 @@ python do_menuconfig() {
     if newmtime > mtime:
         bb.plain("Changed configuration saved at:\n %s\nRecompile will be forced" % config)
         bb.build.write_taint('do_compile', d)
+
+python do_menuconfig() {
+    if not bb.utils.to_boolean(d.getVar("KCONFIG_CONFIG_ENABLE_MENUCONFIG")):
+        bb.fatal("do_menuconfig is disabled, please check KCONFIG_CONFIG_ENABLE_MENUCONFIG variable.")
+        return
+
+    run_kconfig_command(d, d.getVar('KCONFIG_CONFIG_COMMAND'))
 }
 do_menuconfig[depends] += "ncurses-native:do_populate_sysroot"
 do_menuconfig[nostamp] = "1"
