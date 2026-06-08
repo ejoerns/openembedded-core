@@ -1,4 +1,5 @@
 SUMMARY = "libConfuse is a configuration file parser library"
+HOMEPAGE = "https://github.com/libconfuse/libconfuse"
 LICENSE = "ISC"
 LIC_FILES_CHKSUM = "file://LICENSE;md5=42fa47330d4051cd219f7d99d023de3a"
 
