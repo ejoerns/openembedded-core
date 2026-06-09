@@ -1,3 +1,5 @@
+SUMMARY = "Example disk image assembled by genimage"
+
 # Note that this is NOT the root file system recipe and serves only for
 # building the disk image!
 

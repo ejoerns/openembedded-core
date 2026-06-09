@@ -102,7 +102,7 @@ GENIMAGE_IMAGE_FULLNAME ?= "${IMAGE_NAME}${GENIMAGE_IMAGE_SUFFIX}"
 GENIMAGE_IMAGE_LINK_FULLNAME ?= "${IMAGE_LINK_NAME}${GENIMAGE_IMAGE_SUFFIX}"
 
 def get_default_fstype(d):
-    fstypes = d.getVar('IMAGE_FSTYPES' or '').split()
+    fstypes = (d.getVar('IMAGE_FSTYPES') or '').split()
     for x in fstypes:
         if "tar" in x:
             return x
@@ -145,10 +145,10 @@ python do_genimage_preprocess () {
     infile = d.getVar('S') + "/" + d.getVar('GENIMAGE_CONFIG')
     outfile = d.getVar('B') + "/.config"
 
-    with open(infile, "r+") as input:
+    with open(infile, "r") as input:
         content = input.read()
 
-        if "GENIMAGE_IMAGE_FULLNAME" not in input:
+        if "GENIMAGE_IMAGE_FULLNAME" not in content:
             bb.note(f"{d.getVar('GENIMAGE_CONFIG')} does not contain ${{GENIMAGE_IMAGE_FULLNAME}}")
 
         expansion = d.expand(content)
@@ -189,13 +189,14 @@ SSTATE_SKIP_CREATION:task-genimage = '1'
 addtask genimage after do_unpack
 
 do_deploy () {
-    install -m 0644 ${B}/* ${DEPLOYDIR}/
+    find ${B} -maxdepth 1 -type f -exec install -m 0644 {} ${DEPLOYDIR}/ \;
 
     for img in ${B}/*; do
+        [ -f "$img" ] || continue
         img=$(basename "${img}")
         case "$img" in *"${GENIMAGE_IMAGE_FULLNAME}"*)
             ln -sf ${img} \
-                ${DEPLOYDIR}/$(echo "${img}" | sed "s/${GENIMAGE_IMAGE_FULLNAME}/${GENIMAGE_IMAGE_LINK_FULLNAME}/")
+                ${DEPLOYDIR}/$(echo "${img}" | sed "s/${GENIMAGE_IMAGE_FULLNAME}/${GENIMAGE_IMAGE_LINK_FULLNAME}/g")
         esac
     done
 }
