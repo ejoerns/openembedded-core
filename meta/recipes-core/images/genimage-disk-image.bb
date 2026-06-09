@@ -9,7 +9,9 @@ SRC_URI += "file://genimage.config"
 
 DEPENDS += "e2fsprogs-native"
 
+ROOTFS_IMAGE_NAME ?= "core-image-minimal"
+
 do_genimage[depends] += " \
     virtual/bootloader:do_deploy \
-    core-image-minimal:do_image_complete \
+    ${ROOTFS_IMAGE_NAME}:do_image_complete \
 "
