@@ -68,7 +68,7 @@
 #
 # GENIMAGE_CONFIG	- config passed to genimage --config (default: 'genimage.config'). bitbake
 # variables are expanded.
-# GENIMAGE_IMAGE_SUFFIX	- file extension suffix for created image (default: 'img')
+# GENIMAGE_IMAGE_SUFFIX	- file extension suffix for created image (default: '.img')
 # GENIMAGE_ROOTFS_IMAGE - input rootfs image to generate file system images from
 # GENIMAGE_ROOTFS_IMAGE_FSTYPE	- input roofs FSTYPE to use (default: 'tar.bz2')
 # GENIMAGE_ROOTFS_IMAGE_SUFFIX	- IMAGE_NAME_SUFFIX to use (default: '${IMAGE_NAME_SUFFIX}')
@@ -79,6 +79,9 @@ inherit nopackages image-artifact-names deploy
 
 LICENSE ?= "MIT"
 PACKAGES = ""
+DEPENDS += "genimage-native"
+
+INHIBIT_DEFAULT_DEPS = "1"
 
 PACKAGE_ARCH = "${MACHINE_ARCH}"
 
@@ -88,24 +91,15 @@ python () {
 }
 
 S = "${UNPACKDIR}"
-
 B = "${WORKDIR}/genimage-${PN}"
-
-INHIBIT_DEFAULT_DEPS = "1"
-
-DEPENDS += "genimage-native"
 
 GENIMAGE_CONFIG ?= "genimage.config"
 
-GENIMAGE_IMAGE_SUFFIX ?= "img"
+GENIMAGE_IMAGE_SUFFIX ?= ".img"
 
-GENIMAGE_IMAGE_NAME = "${IMAGE_BASENAME}-${MACHINE}-${DATETIME}"
-# Don't include the DATETIME variable in the sstate package signature
-GENIMAGE_IMAGE_NAME[vardepsexclude] = "DATETIME"
-GENIMAGE_IMAGE_LINK_NAME = "${IMAGE_BASENAME}-${MACHINE}"
-
-GENIMAGE_IMAGE_FULLNAME ?= "${GENIMAGE_IMAGE_NAME}.${GENIMAGE_IMAGE_SUFFIX}"
-GENIMAGE_IMAGE_LINK_FULLNAME ?= "${GENIMAGE_IMAGE_LINK_NAME}.${GENIMAGE_IMAGE_SUFFIX}"
+IMAGE_NAME_SUFFIX ?= ""
+GENIMAGE_IMAGE_FULLNAME ?= "${IMAGE_NAME}${GENIMAGE_IMAGE_SUFFIX}"
+GENIMAGE_IMAGE_LINK_FULLNAME ?= "${IMAGE_LINK_NAME}${GENIMAGE_IMAGE_SUFFIX}"
 
 def get_default_fstype(d):
     fstypes = d.getVar('IMAGE_FSTYPES' or '').split()
@@ -114,15 +108,18 @@ def get_default_fstype(d):
             return x
     return "tar.bz2"
 
+# rootfs image to extract and use as rootpath
 GENIMAGE_ROOTFS_IMAGE ?= ""
 GENIMAGE_ROOTFS_IMAGE_FSTYPE ?= "${@get_default_fstype(d)}"
-GENIMAGE_ROOTFS_IMAGE_SUFFIX ?= "${IMAGE_NAME_SUFFIX}"
+GENIMAGE_ROOTFS_IMAGE_SUFFIX ?= ".rootfs"
 
 do_genimage[depends] += "${@'${GENIMAGE_ROOTFS_IMAGE}:do_image_complete' if '${GENIMAGE_ROOTFS_IMAGE}' else ''}"
 
+# bmap generation
 GENIMAGE_CREATE_BMAP ?= "0"
 do_genimage[depends] += "${@'bmaptool-native:do_populate_sysroot' if d.getVar('GENIMAGE_CREATE_BMAP') == '1' else ''}"
 
+# compression support
 GENIMAGE_COMPRESSION ??= "none"
 
 GENIMAGE_COMPRESS_DEPENDS[none] = ""
@@ -137,7 +134,9 @@ GENIMAGE_COMPRESS_CMD = "${@d.getVarFlag('GENIMAGE_COMPRESS_CMD', '${GENIMAGE_CO
 
 GENIMAGE_TMPDIR  = "${WORKDIR}/genimage-tmp"
 GENIMAGE_ROOTDIR  = "${WORKDIR}/root"
-GENIMAGE_OPTS ??= ""
+
+# additional options to pass to the genimage call
+GENIMAGE_EXTRA_OPTS ??= ""
 
 do_genimage_preprocess[cleandirs] = "${GENIMAGE_TMPDIR} ${GENIMAGE_ROOTDIR} ${B}"
 do_genimage_preprocess[dirs] = "${B}"
@@ -173,7 +172,7 @@ fakeroot do_genimage () {
         --includepath ${S} \
         --outputpath ${B} \
         --rootpath ${GENIMAGE_ROOTDIR} \
-        ${GENIMAGE_OPTS}
+        ${GENIMAGE_EXTRA_OPTS}
 
     if [ "${GENIMAGE_CREATE_BMAP}" = 1 ] ; then
         bmaptool create -o ${B}/${GENIMAGE_IMAGE_FULLNAME}.bmap ${B}/${GENIMAGE_IMAGE_FULLNAME}
@@ -187,7 +186,7 @@ do_genimage[depends] += "virtual/fakeroot-native:do_populate_sysroot"
 do_genimage[prefuncs] += "do_genimage_preprocess"
 SSTATE_SKIP_CREATION:task-genimage = '1'
 
-addtask genimage after do_configure
+addtask genimage after do_unpack
 
 do_deploy () {
     install -m 0644 ${B}/* ${DEPLOYDIR}/
@@ -204,6 +203,8 @@ do_deploy () {
 addtask deploy after do_genimage before do_build
 
 do_patch[noexec] = "1"
+do_configure[noexec] = "1"
 do_compile[noexec] = "1"
 do_install[noexec] = "1"
+deltask do_populate_lic
 deltask do_populate_sysroot
