@@ -213,3 +213,145 @@ The following variables control the behaviour of the
 :term:`GENIMAGE_EXTRA_OPTS`
    Additional command-line options forwarded verbatim to the ``genimage``
    invocation. Default: empty.
+
+:term:`GENIMAGE_RUNQEMU`
+   Set to ``"1"`` to generate a ``.qemuboot.conf`` alongside the disk
+   image so that the recipe can be started with
+   :ref:`ref-manual/tasks:running-an-image-under-qemu`. Default: ``"0"``.
+   See :ref:`ref-classes-genimage-runqemu` for details.
+
+.. _ref-classes-genimage-runqemu:
+
+Running a genimage Disk Image under QEMU
+-----------------------------------------
+
+The :ref:`ref-classes-genimage` class can generate a ``.qemuboot.conf``
+file alongside the disk image so that the recipe can be started with
+:term:`runqemu` without any manual QEMU flags:
+
+.. code-block:: none
+
+   runqemu <recipe-name> nographic
+
+To enable this, set :term:`GENIMAGE_RUNQEMU` to ``"1"`` in the
+disk-image recipe and configure the necessary ``QB_*`` variables.
+
+How it works
+~~~~~~~~~~~~
+
+When :term:`GENIMAGE_RUNQEMU` is enabled the class adds a
+``do_write_qemuboot_conf`` task (run after ``do_genimage``, before
+``do_deploy``) that serialises all ``QB_*`` variables and a small set of
+build-path variables into an INI-format ``.qemuboot.conf`` file. Paths
+inside the file are stored relative to :term:`DEPLOY_DIR_IMAGE` so the
+artifacts remain usable after relocation.
+
+:term:`runqemu` reads this file at boot time. It substitutes the path of
+the generated ``.img`` file for the ``@ROOTFS@`` placeholder in
+:term:`QB_ROOTFS_OPT` (which for ``qemuarm64`` already wires up a
+``virtio-blk-pci`` drive) and passes ``QB_DEFAULT_BIOS`` as the ``-bios``
+argument to QEMU.
+
+Supported image types (``img``, ``img.gz``, ``img.xz``) are treated as
+fully self-booting disk images by default — QEMU will not load an external
+kernel. If you instead want :term:`runqemu` to supply the kernel via
+``-kernel`` (e.g. the disk image is a rootfs-only partition image), set::
+
+   QB_FSINFO = "img:no-kernel-in-fs"
+
+Example for qemuarm64
+~~~~~~~~~~~~~~~~~~~~~
+
+A genimage disk image for ``qemuarm64`` that contains U-Boot, a kernel,
+and a root filesystem typically looks like this::
+
+   inherit genimage
+
+   SRC_URI += "file://genimage.config"
+
+   DEPENDS += "e2fsprogs-native"
+
+   # Pull in all artifacts consumed by genimage.config
+   do_genimage[depends] += " \
+       virtual/bootloader:do_deploy \
+       virtual/kernel:do_deploy \
+       core-image-minimal:do_image_complete \
+   "
+
+   # Enable runqemu integration
+   GENIMAGE_RUNQEMU   = "1"
+
+   # The disk image is self-booting — no external kernel
+   QB_DEFAULT_KERNEL  = "none"
+
+   # U-Boot binary deployed to DEPLOY_DIR_IMAGE acts as QEMU firmware.
+   # runqemu resolves this relative to DEPLOY_DIR_IMAGE and passes it
+   # as: qemu-system-aarch64 ... -bios u-boot.bin
+   QB_DEFAULT_BIOS    = "u-boot.bin"
+
+The ``genimage.config`` file for this recipe would embed the kernel and
+rootfs in separate GPT partitions, with ``u-boot.bin`` passed to QEMU as
+firmware independently of the disk image itself::
+
+   image ${GENIMAGE_IMAGE_FULLNAME} {
+       hdimage {
+           align = 1M
+           partition-table-type = gpt
+       }
+
+       partition boot {
+           image = "${KERNEL_IMAGETYPE}"
+           size  = 64M
+       }
+
+       partition rootfs {
+           image = "${IMAGE_LINK_NAME}.rootfs.ext4"
+           partition-type-uuid = "root-arm"
+           size  = 512M
+       }
+   }
+
+.. note::
+
+   The ``qemuarm64`` machine configuration already defines
+   :term:`QB_ROOTFS_OPT` with a ``virtio-blk-pci`` drive and
+   :term:`QB_MACHINE` / :term:`QB_CPU` / :term:`QB_SYSTEM_NAME`.
+   These values are inherited automatically through the machine
+   configuration and written into the ``.qemuboot.conf`` by
+   ``do_write_qemuboot_conf`` — you do not need to repeat them in the
+   recipe.
+
+runqemu Variables for genimage
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The following ``QB_*`` variables are particularly relevant when using the
+:ref:`ref-classes-genimage` class with :term:`runqemu`:
+
+:term:`QB_DEFAULT_KERNEL`
+   Set to ``"none"`` for self-booting disk images that contain their own
+   bootloader and kernel. :term:`runqemu` will not pass ``-kernel`` to
+   QEMU.
+
+:term:`QB_DEFAULT_BIOS`
+   Name of a firmware binary deployed to :term:`DEPLOY_DIR_IMAGE` (e.g.
+   ``u-boot.bin``). :term:`runqemu` resolves this relative to
+   :term:`DEPLOY_DIR_IMAGE` and passes it to QEMU as ``-bios``. On
+   ``qemuarm64`` with ``-machine virt``, this is required for disk-based
+   booting because the ``virt`` machine has no built-in firmware.
+
+:term:`QB_FSINFO`
+   Controls whether :term:`runqemu` loads an external kernel for a given
+   image type. For ``img`` images the default is self-booting (no external
+   kernel). Set ``QB_FSINFO = "img:no-kernel-in-fs"`` if the disk image
+   contains only a root filesystem and requires QEMU to provide the kernel
+   via ``-kernel``.
+
+:term:`QB_KERNEL_CMDLINE_APPEND`
+   Additional kernel command-line parameters. Useful to set the correct
+   console device, e.g. ``console=ttyAMA0`` for ``qemuarm64``.
+
+:term:`QB_ROOTFS_OPT`
+   Full QEMU ``-drive`` string with the ``@ROOTFS@`` placeholder replaced
+   by the image path. Inherited from the machine configuration; override
+   only if you need a different bus type (e.g. ``virtio-scsi`` instead of
+   ``virtio-blk``).

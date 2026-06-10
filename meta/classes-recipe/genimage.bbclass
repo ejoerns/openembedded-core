@@ -209,3 +209,96 @@ do_compile[noexec] = "1"
 do_install[noexec] = "1"
 deltask do_populate_lic
 deltask do_populate_sysroot
+
+# ---------------------------------------------------------------------------
+# Optional runqemu integration
+#
+# Set GENIMAGE_RUNQEMU = "1" in your disk-image recipe to have the class
+# generate a .qemuboot.conf alongside the disk image so that the recipe can
+# be booted directly with:
+#
+#   runqemu <recipe-name> nographic
+#
+# Required QB_* settings for a fully self-booting disk image:
+#
+#   QB_DEFAULT_KERNEL = "none"          -- disk image contains its own kernel
+#   QB_DEFAULT_BIOS   = "u-boot.bin"   -- firmware loaded by QEMU as -bios
+#                                          (resolved relative to DEPLOY_DIR_IMAGE)
+#
+# The machine's QB_ROOTFS_OPT (e.g. the virtio-blk-pci drive defined in
+# qemuarm64.conf) is reused as-is; @ROOTFS@ is replaced by runqemu with the
+# path to the generated .img file.
+# ---------------------------------------------------------------------------
+GENIMAGE_RUNQEMU ?= "0"
+
+# Default QB_* values when runqemu integration is enabled.
+# Recipes may override any of these.
+QB_DEFAULT_FSTYPE ?= "${@d.getVar('GENIMAGE_IMAGE_SUFFIX').lstrip('.')}"
+QB_DEFAULT_KERNEL ?= "none"
+QB_DEFAULT_BIOS   ?= ""
+
+def _genimage_qemuboot_vars(d):
+    build_vars = [
+        'MACHINE', 'TUNE_ARCH', 'DEPLOY_DIR_IMAGE',
+        'IMAGE_NAME', 'IMAGE_LINK_NAME',
+        'STAGING_DIR_NATIVE', 'STAGING_BINDIR_NATIVE',
+    ]
+    return build_vars + [k for k in d.keys() if k.startswith('QB_')]
+
+do_write_qemuboot_conf[vardeps] += "${@' '.join(_genimage_qemuboot_vars(d))}"
+do_write_qemuboot_conf[vardepsexclude] += "TOPDIR"
+
+python do_write_qemuboot_conf() {
+    if d.getVar('GENIMAGE_RUNQEMU') != '1':
+        return
+
+    import configparser, os
+
+    deploydir  = d.getVar('DEPLOYDIR')
+    finalpath  = d.getVar('DEPLOY_DIR_IMAGE')
+    topdir     = d.getVar('TOPDIR')
+    image_name = d.getVar('IMAGE_NAME')
+    link_name  = d.getVar('IMAGE_LINK_NAME')
+
+    qemuboot      = os.path.join(deploydir, image_name + '.qemuboot.conf')
+    qemuboot_link = os.path.join(deploydir, link_name  + '.qemuboot.conf') if link_name else ''
+
+    cf = configparser.ConfigParser()
+    cf.add_section('config_bsp')
+
+    for k in sorted(_genimage_qemuboot_vars(d)):
+        if ':' in k:
+            continue
+        # Point at the relocatable qemu-helper-native sysroot (not removed by rm_work)
+        if k == 'STAGING_BINDIR_NATIVE':
+            val = os.path.join(d.getVar('BASE_WORKDIR'), d.getVar('BUILD_SYS'),
+                               'qemu-helper-native/1.0/recipe-sysroot-native/usr/bin/')
+        else:
+            val = d.getVar(k)
+        if val is None:
+            continue
+        # Store paths relative to DEPLOY_DIR_IMAGE for relocatability
+        if val.startswith(topdir):
+            val = os.path.relpath(val, finalpath)
+        cf.set('config_bsp', k, val)
+
+    # Resolve QB_DEFAULT_KERNEL to the real filename (skip when "none")
+    kernel = d.getVar('QB_DEFAULT_KERNEL') or 'none'
+    if kernel != 'none':
+        kernel_link = os.path.join(d.getVar('DEPLOY_DIR_IMAGE'), kernel)
+        kernel = os.path.relpath(os.path.realpath(kernel_link), finalpath)
+    cf.set('config_bsp', 'QB_DEFAULT_KERNEL', kernel)
+
+    os.makedirs(deploydir, exist_ok=True)
+    with open(qemuboot, 'w') as f:
+        cf.write(f)
+
+    if qemuboot_link and qemuboot_link != qemuboot:
+        if os.path.lexists(qemuboot_link):
+            os.remove(qemuboot_link)
+        os.symlink(os.path.basename(qemuboot), qemuboot_link)
+
+    bb.note("Written %s" % qemuboot)
+}
+
+addtask do_write_qemuboot_conf after do_genimage before do_deploy

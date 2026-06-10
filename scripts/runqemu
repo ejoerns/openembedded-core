@@ -197,7 +197,8 @@ class BaseConfig(object):
         self.portlocks = {}
         self.bitbake_e = ''
         self.snapshot = False
-        self.wictypes = ('wic.zst', 'wic', 'wic.vmdk', 'wic.qcow2', 'wic.vdi', "wic.vhd", "wic.vhdx")
+        self.wictypes = ('wic.zst', 'wic', 'wic.vmdk', 'wic.qcow2', 'wic.vdi', "wic.vhd", "wic.vhdx",
+                         'img', 'img.gz', 'img.xz')
         self.tartypes = ('tar.zst', 'tar.bz2', 'tar.gz', 'tar.xz', 'tar')
         self.fstypes = ('ext2', 'ext3', 'ext4', 'ext2.zst', 'ext3.zst', 'ext4.zst',
                         'jffs2', 'nfs', 'btrfs', 'cpio.gz', 'cpio', 'ramfs',
@@ -686,39 +687,36 @@ to your build configuration.
             else:
                 raise RunQemuError("FSTYPE is NULL!")
 
-        # parse QB_FSINFO into dict, e.g. { 'wic': ['no-kernel-in-fs', 'a-flag'], 'ext4': ['another-flag']}
-        wic_fs = False
+        # parse QB_FSINFO into dict, e.g. { 'wic': ['no-kernel-in-fs'], 'img': ['no-kernel-in-fs']}
+        # Supported flags per disk-image type (any member of self.wictypes):
+        #   no-kernel-in-fs  -- rootfs only, QEMU must supply the kernel externally via -kernel
+        #   kernel-in-fs     -- fully bootable disk image, no external kernel needed (default for wictypes)
         qb_fsinfo = self.get('QB_FSINFO')
         if qb_fsinfo:
-            qb_fsinfo = qb_fsinfo.split()
-            for fsinfo in qb_fsinfo:
+            for fsinfo in qb_fsinfo.split():
                 try:
                     fstype, fsflag = fsinfo.split(':')
-
-                    if fstype == 'wic':
-                        if fsflag == 'no-kernel-in-fs':
-                            wic_fs = True
-                        elif fsflag == 'kernel-in-fs':
-                            wic_fs = False
-                        else:
-                            logger.warning('Unknown flag "%s:%s" in QB_FSINFO', fstype, fsflag)
-                            continue
-                    else:
-                        logger.warning('QB_FSINFO is not supported for image type "%s"', fstype)
-                        continue
-
-                    if fstype in self.fsinfo:
-                        self.fsinfo[fstype].append(fsflag)
-                    else:
-                        self.fsinfo[fstype] = [fsflag]
-                except Exception:
+                except ValueError:
                     logger.error('Invalid parameter "%s" in QB_FSINFO', fsinfo)
+                    continue
 
-        # treat wic images as vmimages (with kernel) or as fsimages (rootfs only)
-        if wic_fs:
-            self.fstypes = self.fstypes + self.wictypes
-        else:
-            self.vmtypes = self.vmtypes + self.wictypes
+                if fsflag not in ('no-kernel-in-fs', 'kernel-in-fs'):
+                    logger.warning('Unknown flag "%s:%s" in QB_FSINFO', fstype, fsflag)
+                    continue
+
+                if fstype not in self.wictypes:
+                    logger.warning('QB_FSINFO: "%s" is not a recognised disk-image type', fstype)
+                    continue
+
+                self.fsinfo.setdefault(fstype, []).append(fsflag)
+
+        # Classify each wictype: vmtype (self-booting, default) or fstype (needs external kernel).
+        # A type moves to fstypes only when QB_FSINFO explicitly says no-kernel-in-fs for it.
+        wictypes_fs = tuple(t for t in self.wictypes
+                            if 'no-kernel-in-fs' in self.fsinfo.get(t, []))
+        wictypes_vm = tuple(t for t in self.wictypes if t not in wictypes_fs)
+        self.fstypes = self.fstypes + wictypes_fs
+        self.vmtypes = self.vmtypes + wictypes_vm
 
     def check_rootfs(self):
         """Check and set rootfs"""
