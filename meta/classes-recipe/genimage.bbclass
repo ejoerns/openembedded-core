@@ -25,7 +25,7 @@
 
 # Most common variables for customization from image recipe:
 GENIMAGE_ROOTFS_IMAGE[doc] = "input rootfs archive to generate file system images from"
-GENIMAGE_ROOTFS_IMAGE_FSTYPE[doc] = "input roofs FSTYPE to use (default: 'tar.bz2')"
+GENIMAGE_ROOTFS_IMAGE_FSTYPE[doc] = "input roofs FSTYPE to use (e.g.: '.tar.bz2'). Defaults to first tar type set in IMAGE_FSTYPES."
 GENIMAGE_ROOTFS_IMAGE_SUFFIX[doc] = "IMAGE_NAME_SUFFIX of the rootfs recipe (default: '.rootfs')"
 GENIMAGE_IMAGE_FULLNAME[doc] = "file name of generated disk image. To be used as variable in genimage.config"
 GENIMAGE_IMAGE_SUFFIX[doc] = "file extension suffix for created image (default: '.img')"
@@ -44,6 +44,10 @@ PACKAGE_ARCH = "${MACHINE_ARCH}"
 python () {
     if bb.data.inherits_class('image', d):
         bb.fatal("genimage.bbclass is not designed to be inherited by a rootfs image recipe!")
+
+    compression = d.getVar('GENIMAGE_COMPRESSION')
+    if compression not in ('none', 'gzip', 'xz'):
+        bb.fatal("GENIMAGE_COMPRESSION must be 'none', 'gzip', or 'xz', got: '%s'" % compression)
 }
 
 S = "${UNPACKDIR}"
@@ -69,7 +73,7 @@ GENIMAGE_ROOTFS_IMAGE ??= ""
 GENIMAGE_ROOTFS_IMAGE_FSTYPE ?= ".${@get_default_fstype(d)}"
 GENIMAGE_ROOTFS_IMAGE_SUFFIX ?= ".rootfs"
 
-do_genimage[depends] += "${@'${GENIMAGE_ROOTFS_IMAGE}:do_image_complete' if '${GENIMAGE_ROOTFS_IMAGE}' else ''}"
+do_genimage[depends] += "${@'${GENIMAGE_ROOTFS_IMAGE}:do_image_complete' if d.getVar('GENIMAGE_ROOTFS_IMAGE') else ''}"
 
 # bmap generation
 GENIMAGE_CREATE_BMAP ?= "0"
@@ -81,15 +85,15 @@ GENIMAGE_COMPRESSION ??= "none"
 GENIMAGE_COMPRESS_DEPENDS[none] = ""
 GENIMAGE_COMPRESS_DEPENDS[gzip] = "pigz-native:do_populate_sysroot"
 GENIMAGE_COMPRESS_DEPENDS[xz]   = "xz-native:do_populate_sysroot"
-do_genimage[depends] += "${@d.getVarFlag('GENIMAGE_COMPRESS_DEPENDS', '${GENIMAGE_COMPRESSION}')}"
+do_genimage[depends] += "${@d.getVarFlag('GENIMAGE_COMPRESS_DEPENDS', '${GENIMAGE_COMPRESSION}') or ''}"
 
 GENIMAGE_COMPRESS_CMD[none] = ":"
 GENIMAGE_COMPRESS_CMD[gzip] = "gzip -f -9 -n"
 GENIMAGE_COMPRESS_CMD[xz]   = "xz -f"
-GENIMAGE_COMPRESS_CMD = "${@d.getVarFlag('GENIMAGE_COMPRESS_CMD', '${GENIMAGE_COMPRESSION}')}"
+GENIMAGE_COMPRESS_CMD = "${@d.getVarFlag('GENIMAGE_COMPRESS_CMD', '${GENIMAGE_COMPRESSION}') or ''}"
 
-GENIMAGE_TMPDIR  = "${WORKDIR}/genimage-tmp"
-GENIMAGE_ROOTDIR  = "${WORKDIR}/root"
+GENIMAGE_TMPDIR = "${WORKDIR}/genimage-tmp"
+GENIMAGE_ROOTDIR = "${WORKDIR}/root"
 
 # additional options to pass to the genimage call
 GENIMAGE_EXTRA_OPTS ??= ""
@@ -134,13 +138,11 @@ fakeroot do_genimage () {
         --rootpath ${GENIMAGE_ROOTDIR} \
         ${GENIMAGE_EXTRA_OPTS}
 
-    if [ "${GENIMAGE_CREATE_BMAP}" = 1 ] ; then
+    if [ "${GENIMAGE_CREATE_BMAP}" = "1" ] ; then
         bmaptool create -o ${B}/${GENIMAGE_IMAGE_FULLNAME}.bmap ${B}/${GENIMAGE_IMAGE_FULLNAME}
     fi
 
     ${GENIMAGE_COMPRESS_CMD} ${B}/${GENIMAGE_IMAGE_FULLNAME}
-
-    rm ${B}/.config
 }
 do_genimage[depends] += "virtual/fakeroot-native:do_populate_sysroot"
 do_genimage[prefuncs] += "do_genimage_preprocess"
@@ -151,6 +153,7 @@ addtask genimage after do_prepare_recipe_sysroot do_unpack
 do_deploy () {
     find ${B} -maxdepth 1 -type f -exec install -m 0644 {} ${DEPLOYDIR}/ \;
 
+    # deploy all images produced, symlink those referenced by GENIMAGE_IMAGE_FULLNAME
     for img in ${B}/*; do
         [ -f "$img" ] || continue
         img=$(basename "${img}")

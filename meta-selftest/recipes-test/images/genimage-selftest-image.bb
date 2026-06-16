@@ -10,5 +10,3 @@ SRC_URI += " \
 "
 
 do_genimage[depends] += "core-image-minimal:do_image_complete"
-
-include test_recipe.inc
